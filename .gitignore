@@ -1,0 +1,5 @@
+mods/*/gpui-kit.d.ts
+mods/*/jsconfig.json
+tools/afterhours-eq/afterhours-eq
+sample/*/
+.DS_Store
