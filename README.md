@@ -19,7 +19,7 @@ With no helper built, or on Linux and Windows, the bar shows a dim dotted baseli
 
 ## The rest
 
-![Afterhours](preview.png)
+![The workspace](screenshots/workspace.png)
 
 - **Sidebar.** Spaces with a tinted letter tile, the logos of the agents running in them, and their tabs nested under a guide line. Below, agents grouped by state: Needs you, Working (a pulsing 3×3 dot matrix), Done, Idle. Dragged under 160 px it becomes an icon rail with hover cards.
 - **Tabs.** The open tab's surface flows into the pane below it and glides to whichever tab you pick.
