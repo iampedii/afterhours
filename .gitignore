@@ -3,3 +3,4 @@ mods/*/jsconfig.json
 tools/afterhours-eq/afterhours-eq
 sample/*/
 .DS_Store
+!sample/frames/

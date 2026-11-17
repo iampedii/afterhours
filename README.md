@@ -59,7 +59,7 @@ Built and checked on Herdr 0.1.16, macOS. Fonts (Geist, Geist Mono) ship with He
 
 ## The preview
 
-`sample/make.sh` builds the three small projects in the pictures. The recordings are frames from `herdr-app shot`, taken in a second Herdr window with its own home and core session, with real music playing; the break was recorded by feeding the bar silence.
+`sample/make.sh` builds the three small projects in the pictures. `sample/poster.py` builds `preview.png` from the two window shots in `sample/frames/`. The recordings are frames from `herdr-app shot`, taken in a second Herdr window with its own home and core session, with real music playing; the break was recorded by feeding the bar silence.
 
 ## License
 
