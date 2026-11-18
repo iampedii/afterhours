@@ -2,7 +2,9 @@
 
 A dark, quiet [Herdr](https://herdr.dev) layout whose tab bar listens to your music. A dot-matrix skyline behind the tabs moves with whatever the Mac is playing, particles hop along it in time with the beat, and a small pixel figure dances at the right end of the bar. When the song builds, its friends join in. When you pause the music, it sits down and smokes a cigarette.
 
-![Afterhours](preview.gif)
+![Afterhours](wallpaper.png)
+
+![Afterhours, moving](preview.gif)
 
 ## The bar
 
@@ -60,7 +62,7 @@ Built and checked on Herdr 0.1.16, macOS. Fonts (Geist, Geist Mono) ship with He
 
 ## The preview
 
-`sample/make.sh` builds the three small projects in the pictures. `sample/poster.py` builds `preview.png` from the two window shots in `sample/frames/`. The recordings are frames from `herdr-app shot`, taken in a second Herdr window with its own home and core session, with real music playing; the break was recorded by feeding the bar silence.
+`wallpaper.png` (3840 × 2160) and `preview.png` are one shot of the layout at work. `sample/make.sh` builds the three small projects in the other pictures, and `sample/poster.py` builds the earlier poster from the two window shots in `sample/frames/`. The recordings are frames from `herdr-app shot`, taken in a second Herdr window with its own home and core session, with real music playing; the break was recorded by feeding the bar silence.
 
 ## License
 
