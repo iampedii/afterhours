@@ -39,6 +39,14 @@
 // Launches, peaks and landings sit on the dot grid; particles fade out towards the ends of the
 // skyline and under the tabs. A calm passage throws a handful and a driven one a crowd.
 //
+// Depth and rhythm. The skyline stands a row above the bar's bottom edge, and under it each
+// column has one dim dot, brighter the taller the column: its reflection. A bass hit sends a pale
+// dotted line from the centre out to both ends, fading as it goes. A particle on its first hop
+// draws a dimmer dot a moment behind it, so its arc can be seen. Under the tabs the skyline is
+// barely there and it reaches full strength 72 px past them. When sound returns after a silence
+// the columns come up from the centre outward. With no sound a small wave wanders along the
+// baseline by itself.
+//
 // The levels come from tools/afterhours-eq (a small helper that analyses system audio and writes 32
 // band levels per channel plus the overall loudness to /tmp/afterhours-eq.levels about 20 times a
 // second); this mod starts it if needed.
@@ -49,6 +57,9 @@ import { exec, readTextFile, appHome } from "herdr";
 const LEVELS = "/tmp/afterhours-eq.levels";
 const DOT = 3, PITCH_X = 6, PITCH_Y = 5, ROWS = 6;     // 3 px pixels, 6 high: leaves headroom for flying dots
 const HEIGHT = ROWS * PITCH_Y;
+// The skyline stands this far above the bar's bottom edge: one row is kept under it for its reflection.
+export const BASE = 8;
+const LIFT = BASE - 2;
 const SPARKS = 180;     // bounded room for overlapping beats and note changes
 const MINUTE = 1200;     // readings in a minute, at about 20 a second
 const FIRST = 3;         // the lowest bands (under ~80 Hz) are nearly always empty: the centre starts above them
@@ -159,6 +170,8 @@ export class Equaliser {
     this.flash = [];         // per column: 1 where a particle just landed, fading
     this.x0 = 0;
     this.span = [0, 0];      // the stretch of the bar particles show in, in px
+    this.sweep = { phase: "idle", placed: false, end: 0, dur: 600 };      // the line a bass hit sends from the centre to both ends
+    this.riseAt = 0;         // when sound came back: the skyline rises from the centre outward
     this.sparks = Array.from({ length: SPARKS }, (_, k) => ({ k, state: "idle", x: 0, y: 0 }));
   }
 
@@ -201,7 +214,7 @@ export class Equaliser {
         if (fresh) {
           // The first reading after silence is a jump from nothing: learn from it, don't react to it.
           if (this.awake) { this.feel(mono); this.beat(mono); }
-          else this.settle(mono);
+          else { this.settle(mono); if (this.live) this.riseAt = Date.now(); }
           this.followMelody(mono);
           if (!this.live) for (const s of this.sparks) if (s.state !== "idle") s.hops = Math.min(s.hops, 1);
           this.stepSparks();
@@ -321,6 +334,10 @@ export class Equaliser {
     this.nextBeat = now + this.beatMs;
     this.pulse = 1;
     this.step(now);
+    // One sweep at a time, and not on every hit of a fast run.
+    if (this.live && this.sweep.phase !== "home" && now - (this.sweep.end - this.sweep.dur) > this.beatMs * 0.9) {
+      this.sweep = { phase: "home", placed: false, end: now, dur: Math.min(900, Math.max(420, this.beatMs * 1.3)) };
+    }
   }
 
   // Counts a beat, once: a bass hit and the clock can both mark the same one.
@@ -346,6 +363,12 @@ export class Equaliser {
       }
     }
     if (this.pulse > 0.02) { this.pulse *= 0.72; changed = true; }
+    // The sweep is drawn once at the centre, then sent out.
+    const w = this.sweep;
+    if (w.phase === "home" && w.placed) { w.phase = "out"; w.end = now + w.dur; changed = true; }
+    else if (w.phase === "out" && now >= w.end) { w.phase = "idle"; changed = true; }
+    // The skyline is still rising after a silence.
+    if (this.live && now - this.riseAt < 900) changed = true;
     for (let c = 0; c < this.flash.length; c++) {
       if (this.flash[c] > 0.05) { this.flash[c] *= 0.72; changed = true; } else this.flash[c] = 0;
     }
@@ -422,8 +445,8 @@ export class Equaliser {
   noteY() {
     const m = this.melody, k = m.band !== null ? unit((m.band - 8) / 15) : this.height;
     // Counted in rows up from the bar's bottom edge, like the column tops, so peaks sit on the grid.
-    const lowest = ROWS / 2 + 1, rows = Math.round(k * (Math.floor((this.barH - 3) / PITCH_Y) - lowest));
-    return this.barH - (lowest + rows) * PITCH_Y;
+    const lowest = ROWS / 2 + 1, rows = Math.round(k * (Math.floor((this.barH - LIFT - 3) / PITCH_Y) - lowest));
+    return this.barH - LIFT - (lowest + rows) * PITCH_Y;
   }
 
   // One hop: up to a peak (slowing), then down onto the skyline a little way along (speeding up).
@@ -436,7 +459,7 @@ export class Equaliser {
     // Past the end of the skyline there is nothing to land on: this hop is the last.
     if (s.endX < this.span[0] || s.endX > this.span[1]) s.hops = 1;
     const under = this.tops.find((c) => Math.abs(c.x - s.endX) < PITCH_X / 2);
-    s.landY = (under ? under.y : this.barH - 2 - DOT) - PITCH_Y;
+    s.landY = (under ? under.y : this.barH - BASE - DOT) - PITCH_Y;
     s.peakY = this.peakFor(s);
     s.state = "up";
     // Land on the musical grid: the nearest half beat (or half note), then the particle's length on.
@@ -462,7 +485,7 @@ export class Equaliser {
       else if (s.state === "up" && now >= s.end) {
         // Land on whatever column is under the end point now, else on the baseline.
         const under = this.tops.find((c) => Math.abs(c.x - s.endX) < PITCH_X / 2);
-        s.landY = (under ? under.y : this.barH - 2 - DOT) - PITCH_Y;
+        s.landY = (under ? under.y : this.barH - BASE - DOT) - PITCH_Y;
         // A rising column can overtake the arc: fade instead of sliding along or under it.
         s.state = s.landY > s.peakY + PITCH_Y && s.landAt > now ? "down" : "idle";
         s.dur = Math.max(1, s.landAt - now);
@@ -496,40 +519,66 @@ export class Equaliser {
     const out = [];
     this.tops = [];
     this.barH = barH;
+    const risen = Date.now() - this.riseAt;
     for (let c = 0; c < n; c++) {
       const k = Math.abs(c - centre) / centre, p = FIRST + k * (last - FIRST), i = Math.floor(p), f = p - i;   // 0 = bass, at the centre
       const side = c < centre ? 0 : 32;                 // left channel on the left half, right on the right
       const raw = (this.bands[side + i] * (1 - f) + (this.bands[side + Math.min(31, i + 1)] ?? 0) * f) / 100;
       // A steep curve keeps steady sound low (2-3 dots) and saves the top rows for peaks; it swells on the beat.
-      const level = Math.min(1, Math.pow(raw, 1.9) * 1.1 * (1 + 0.3 * this.pulse) * this.gain);        // lift mid levels so the skyline uses its full height
+      // After a silence the columns come up from the centre outward over 0.7 s.
+      const held = risen < k * 700;
+      const level = held ? 0 : Math.min(1, Math.pow(raw, 1.9) * 1.1 * (1 + 0.3 * this.pulse) * this.gain);        // lift mid levels so the skyline uses its full height
       const rows = Math.max(1, Math.round(level * ROWS));
       const h = rows * PITCH_Y - (PITCH_Y - DOT);
       this.caps[c] = Math.max(h, this.caps[c] - 0.6);
       const tone = blend(along(CALM, k), along(DRIVEN, k), warmth), color = css(tone), x = x0 + c * PITCH_X, dim = x < dimUntil;
       const flash = dim ? 0 : this.flash[c];
-      if (!dim) this.tops.push({ x, y: barH - 2 - h, rows, color, k, energy: raw });
+      if (!dim) this.tops.push({ x, y: barH - BASE - h, rows, color, k, energy: raw });
       // Polish: the skyline dissolves toward both ends; each column's body is soft and its top
       // dot is a lighter, brighter tip, so the outline reads as a glowing edge; the centre
       // flashes a little on the beat; at rest the baseline breathes slowly.
-      const edge = (1 - 0.75 * Math.pow(k, 2.5)) * (dim ? 0.35 : 1);
-      const body = div().id(`eq-${c}`).absolute().left(x).bottom(2).w(DOT).h(h).bg(color)
+      // Under the tabs it is barely there, and it comes up to full strength over the 72 px after
+      // them, so tab titles sit on a quiet stretch.
+      const edge = (1 - 0.75 * Math.pow(k, 2.5)) * (dim ? 0.18 : 0.18 + 0.82 * unit((x - dimUntil) / 72));
+      // The reflection: one dot under the baseline, brighter under a taller column.
+      // Not under the tabs, and in a few steps of brightness, so it costs little.
+      if (!dim) out.push(div().id(`eq-ref-${c}`).absolute().left(x).bottom(BASE - PITCH_Y).w(DOT).h(DOT).bg(color)
+        .opacity((this.live ? 0.05 + 0.3 * Math.round(level * 4) / 4 : 0.05) * edge));
+      const body = div().id(`eq-${c}`).absolute().left(x).bottom(BASE).w(DOT).h(h).bg(color)
         .spring("height", { response: 360, damping: 1 });
       out.push(this.live
         ? body.opacity(Math.min(1, (rows > 1 ? 0.55 : 0.7) * edge + 0.25 * this.pulse * (1 - k) * (dim ? 0 : 1) + (rows > 1 ? 0 : 0.3 * flash))).transition("opacity", { duration: 300, easing: "ease-out" })
         : body.loop("opacity", { from: 0.14 * edge, to: 0.34 * edge, period: 3600 }));
       const light = lighten(tone);
       if (this.live && rows > 1) {
-        out.push(div().id(`eq-tip-${c}`).absolute().left(x).top(barH - 2 - h).w(DOT).h(DOT).bg(flash > 0.05 ? css(blend(tone, WARM, 0.18 + 0.6 * flash)) : light).opacity(0.95 * edge)
+        out.push(div().id(`eq-tip-${c}`).absolute().left(x).top(barH - BASE - h).w(DOT).h(DOT).bg(flash > 0.05 ? css(blend(tone, WARM, 0.18 + 0.6 * flash)) : light).opacity(0.95 * edge)
           .spring("top", { response: 360, damping: 1 }));
       }
       if (this.live && !dim && this.caps[c] > h + 2) {
-        out.push(div().id(`eq-cap-${c}`).absolute().left(x).top(barH - 2 - this.caps[c] - PITCH_Y).w(DOT).h(DOT).bg(light).opacity(0.7 * edge)
+        out.push(div().id(`eq-cap-${c}`).absolute().left(x).top(barH - BASE - this.caps[c] - PITCH_Y).w(DOT).h(DOT).bg(light).opacity(0.7 * edge)
           .spring("top", { response: 480, damping: 1 }));
       }
     }
+    // The sweep: on a bass hit a pale line leaves the centre for both ends and fades on the way.
+    // Drawn under the grille, so it is a column of dots like the rest.
+    const w = this.sweep, home = w.phase === "home";
+    for (const side of [-1, 1]) {
+      out.push(div().id(`eq-sweep-${side}`).absolute().w(DOT).h(HEIGHT - (PITCH_Y - DOT)).bottom(BASE).bg("#fff4ea")
+        .left(home ? this.centreX : side < 0 ? this.span[0] : this.span[1]).opacity(home && this.live ? 0.5 : 0)
+        .transition("left", { duration: home ? 1 : w.dur, easing: "ease-out" }).transition("opacity", { duration: home ? 1 : w.dur, easing: "ease-in" }));
+    }
+    if (home) w.placed = true;
+    // With no sound a small wave wanders along the baseline, there and back, on its own: nothing redraws for it.
+    if (!this.live) {
+      const from = this.span[0] + 20, to = this.span[1] - 40;
+      [[0, 1], [1, 1], [2, 1], [1, 2]].forEach(([dx, row], j) => {
+        out.push(div().id(`eq-wave-${j}`).absolute().size(DOT).bottom(BASE + row * PITCH_Y).bg(css(along(CALM, 0.5))).opacity(row === 2 ? 0.22 : 0.3)
+          .loop("left", { from: from + dx * PITCH_X, to: to + dx * PITCH_X, period: 26000, easing: "ease-in-out" }));
+      });
+    }
     // The grille: bar-colored lines between pixel rows turn each bar into a stack of dots.
     for (let r = 1; r <= ROWS + 1; r++) {
-      out.push(div().absolute().left(x0).w(n * PITCH_X).bottom(2 + r * PITCH_Y - (PITCH_Y - DOT)).h(PITCH_Y - DOT).bg(canvas));
+      out.push(div().absolute().left(x0).w(n * PITCH_X).bottom(BASE + r * PITCH_Y - (PITCH_Y - DOT)).h(PITCH_Y - DOT).bg(canvas));
     }
     // Particles. Transitions stay attached; a reset to a new start point uses 1 ms. Sideways
     // motion is even while the rise slows and the fall speeds up, which draws an arc.
@@ -542,6 +591,16 @@ export class Equaliser {
       // and a little on each later hop.
       const inside = unit(Math.min(x - this.span[0], this.span[1] - x) / 40);
       const visible = s.state === "idle" || s.state === "lit" || last ? 0 : s.opacity * inside * (s.hops < s.first ? 0.75 : 1);
+      // A trail: a dimmer dot follows the same path a moment behind, on a particle's first hop
+      // (later hops are already fading). A resting particle has none.
+      if (s.state !== "idle" && s.hops === s.first) {
+        for (const j of [1]) {
+          const late = d > 1 ? 60 : 0;
+          out.push(div().id(`eq-trail-${s.k}-${j}`).absolute().size(DOT).left(x).top(y).bg(shade(s, down)).opacity(visible * 0.4)
+            .transition("left", { duration: d, delay: late, easing: "linear" }).transition("top", { duration: d, delay: late, easing: up ? "ease-out" : "ease-in" })
+            .transition("opacity", { duration: up ? Math.min(d, 140) : d, delay: late, easing: up ? "ease-out" : "ease-in" }));
+        }
+      }
       out.push(div().id(`eq-spark-${s.k}`).absolute().size(DOT).left(x).top(y).bg(s.color ? shade(s, down) : RANGES.treble.color)
         .opacity(visible)
         // Rising slows to the peak and falling speeds up from it: one unbroken arc. A particle

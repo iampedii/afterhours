@@ -22,10 +22,16 @@
 // something happens (a beat, the bounce letting go, a jump), and springs there over about half a
 // beat with a little overshoot. Every part uses the same spring, so a figure moves as one.
 //
+// They dance on a small stage: a slab under their feet that widens as friends join, a soft column
+// of light over the first figure that brightens on each beat, and a shadow under each one that
+// shrinks when it leaves the ground. Friends further back are a little dimmer. When the music
+// comes back after a break the first figure stands up and waves hello.
+//
 // A figure is drawn on a 16 x 10 grid of cells, the icon's own proportions: a 12 x 8 body, two
 // arms, four legs and two eyes.
 
 import { div } from "gpui-kit";
+import { BASE } from "./eq.js";
 
 const CELL = 2.5;      // px per grid cell for the first figure: 40 px wide and 25 px tall
 export const DANCER_WIDTH = 16 * CELL + 20;      // its space, with room either side to lean and shuffle
@@ -82,6 +88,7 @@ const HOLD = 8;      // beats a move lasts
 
 let now = { name: "sway", since: 0, set: 0 };      // the move being danced, and the beat it started on
 let friends = 0, counted = -1;                     // how many friends are out, and the beat that was last decided on
+let rested = false;                                // whether the first figure was on a break at the last look
 let heard = false, quiet = null;                   // whether music has played at all, and when it last stopped
 
 // The break, in ms since the music stopped.
@@ -157,8 +164,12 @@ function figure(eq, who, pose, hops, barH, canvas) {
   const dy = pose.sit ? 2 * u - 1.5 : (pose.y ?? 0) * 2.5 * size + bounce - jump;
   const sink = Math.max(0, dy);      // sinking shortens the legs; rising takes them off the ground
   const blink = pose.asleep || (Date.now() + who.x * 97) % 3700 < 140;      // each figure blinks at its own moment
-  const tall = 10 * u, shown = who.out ? 1 : 0;
-  const origin = { x: who.x + lean, y: barH - 2 - tall + dy + (who.out ? 0 : tall), spring: { response: beat * 0.45, damping: 0.72 } };
+  const tall = 10 * u, shown = who.out ? who.dim ?? 1 : 0;
+  const origin = { x: who.x + lean, y: barH - BASE - tall + dy + (who.out ? 0 : tall), spring: { response: beat * 0.45, damping: 0.72 } };
+  // Its shadow on the stage: narrower while it is off the ground.
+  const cast = 12 * u * (dy < -1 ? 0.5 : 1);
+  const shadow = div().id(`dancer-${who.id}-shadow`).absolute().left(who.x - cast / 2).top(barH - BASE).w(cast).h(2).bg("#000000").opacity(who.out ? 0.5 : 0)
+    .spring("left", origin.spring).spring("width", origin.spring).transition("opacity", { duration: 260, easing: "ease-out" });
   const c = (cells) => cells * u * wide;      // cells out from the centre line, narrowed side on
   const id = (name) => `${who.id}-${name}`;
   const arm = (name, side, lower) => part(id(name), side < 0 ? c(-6) - 2 * u : c(6), 3 * u + (lower ?? 0) * 3 * size, 2 * u, 2 * u, who.color, origin, wide < 1 ? 0 : shown);
@@ -185,6 +196,7 @@ function figure(eq, who, pose, hops, barH, canvas) {
     });
   }
   return [
+    shadow,
     ...smoke,
     part(id("body"), c(-6), 0, 12 * u * wide, 8 * u, who.color, origin, shown),
     arm("arm-left", -1, pose.armL), arm("arm-right", 1, pose.armR),
@@ -198,18 +210,39 @@ function figure(eq, who, pose, hops, barH, canvas) {
 // (the tabs' edge), and `canvas` the bar's own color (the eyes).
 export function dancers(eq, right, left, barH, canvas) {
   gather(eq);
+  const r = rest(eq);
+  // Back from a break: the first thing it does is wave hello.
+  if (rested && !r) now = { name: "hello", since: eq.steps, set: 0 };
+  rested = Boolean(r);
   const { steps, hops } = move(eq), danced = eq.steps - now.since;
   // A friend is one step behind the figure to its right, and every other one mirrors the move.
   const poseFor = (k) => { const p = steps[(((danced - k) % steps.length) + steps.length) % steps.length]; return k % 2 ? mirrored(p) : p; };
   // On a break the first figure stays: standing still, then sitting with a cigarette (the right arm
   // lifts it for a drag), then dozing.
-  const r = rest(eq);
   const resting = r && { still: true, sit: r.stage !== "stand", asleep: r.stage === "doze", cigarette: r.stage === "smoke",
     drag: r.drag, armR: r.stage === "smoke" ? (r.drag ? -1.5 : 0.4) : 0, puffs: r.puffs };
   const all = [{ id: "lead", x: right - DANCER_WIDTH / 2, cell: CELL, color: "#d97757", smokes: true, out: (eq.live || Boolean(r)) && right - DANCER_WIDTH > left }];
   FRIENDS.forEach((f, k) => {
     const x = right - DANCER_WIDTH - 22 - k * FRIEND_GAP;
-    all.push({ id: `friend-${k}`, x, ...f, out: eq.live && k < friends && x - 8 * f.cell - 6 > left });
+    all.push({ id: `friend-${k}`, x, ...f, dim: 0.95 - 0.07 * k, out: eq.live && k < friends && x - 8 * f.cell - 6 > left });
   });
-  return all.flatMap((who, k) => figure(eq, who, k === 0 && resting ? resting : poseFor(k), hops, barH, canvas));
+  // The stage. The slab runs from the furthest friend out to the first figure; the light is a
+  // soft column over the first figure, brighter for the first third of each beat.
+  const lead = all[0], floor = barH - BASE, on = lead.out ? 1 : 0;
+  const far = all.filter((who) => who.out).reduce((x, who) => Math.min(x, who.x - 8 * who.cell - 6), lead.x), end = right - 4;
+  const grow = { response: 420, damping: 0.85 }, fade = { duration: 260, easing: "ease-out" };
+  const beat = Math.min(800, Math.max(320, eq.beatMs)), landed = eq.live && Date.now() - eq.lastStep < beat * 0.3;
+  const stage = [
+    div().id("dancer-stage").absolute().left(far).top(floor).w(end - far).h(BASE - 2).bg("#d2704a").opacity(0.16 * on)
+      .spring("left", grow).spring("width", grow).transition("opacity", fade),
+    div().id("dancer-stage-lip").absolute().left(far).top(floor).w(end - far).h(1).bg("#f5e0d7").opacity(0.45 * on)
+      .spring("left", grow).spring("width", grow).transition("opacity", fade),
+    div().id("dancer-pool").absolute().left(lead.x - 22).top(floor).w(44).h(2).bg("#ffd9c2").opacity(eq.live && lead.out ? (landed ? 0.95 : 0.4) : 0)
+      .transition("opacity", { duration: landed ? 60 : 320, easing: "ease-out" }),
+    // The light: columns of warm light one inside the next, so it is brightest down the middle
+    // and soft at the sides.
+    ...[56, 44, 32, 20].map((wide, i) => div().id(`dancer-light-${i}`).absolute().left(lead.x - wide / 2).top(0).w(wide).h(floor).bg("#ffd2b8")
+      .opacity(eq.live && lead.out ? (landed ? 0.055 : 0.025) : 0).transition("opacity", { duration: landed ? 60 : 320, easing: "ease-out" })),
+  ];
+  return stage.concat(all.flatMap((who, k) => figure(eq, who, k === 0 && resting ? resting : poseFor(k), hops, barH, canvas)));
 }
